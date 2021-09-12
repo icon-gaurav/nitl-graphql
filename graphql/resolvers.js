@@ -33,15 +33,18 @@ const resolvers = {
                 .then(async p => {
                     if (p) {
                         try {
+                            let u = undefined;
+                            if (context.isAuthenticated()) {
+                                u = context.getUser();
+                            }
                             const likes = await Reactions.paginate({post: p._id, kind: 'like'});
                             const comments = await Reactions.paginate({post: p._id, kind: 'comment'});
                             const commentList = [];
-                            for(let i = 0; i < comments.docs.length; i++) {
+                            for (let i = 0; i < comments.docs.length; i++) {
                                 let com = comments.docs[i];
                                 const commentsLike = await Reactions.paginate({reaction: com._id, kind: 'like'});
                                 const commentsReport = await Reactions.paginate({reaction: com._id, kind: 'report'});
-                                if (context.isAuthenticated()) {
-                                    const u = context.getUser();
+                                if (u) {
 
                                     const mylike = await Reactions.findOne({
                                         reaction: com._id,
@@ -54,15 +57,15 @@ const resolvers = {
                                         user: u._id
                                     });
                                     com.reactions = {
-                                        likes:commentsLike,
-                                        reports:commentsReport,
+                                        likes: commentsLike,
+                                        reports: commentsReport,
                                         mylike,
                                         myreport
                                     };
                                 } else {
                                     com.reactions = {
-                                        likes:commentsLike,
-                                        reports:commentsReport,
+                                        likes: commentsLike,
+                                        reports: commentsReport,
                                     };
                                 }
                                 commentList.push(com)
@@ -148,31 +151,7 @@ const resolvers = {
                             });
                             return newUser.save()
                                 .then(nu => {
-                                    try {
-                                        const code = randomize('Aa0', 10);
-                                        let newUserVerification = new EmailVerification({
-                                            user: nu,
-                                            email,
-                                            code,
-                                            expiresAt: add(new Date(), {days: 7})
-                                        });
-                                        newUserVerification.save()
-                                            .then(ev => {
-                                                Mailer.sendVerificationEmail(nu, `https://tricdot.com/email-verification?code=${ev.code}&email=${email}`)
-                                                    .then(r => {
-                                                        // console.log(r)
-                                                    })
-                                                    .catch(e => {
-                                                        console.log(e)
-                                                    })
-                                            }).catch(e => {
-                                            console.log(e)
-                                        })
-
-                                        return nu
-                                    } catch (e) {
-                                        return e;
-                                    }
+                                    return nu;
 
                                 })
                                 .catch(e => e)
@@ -182,16 +161,33 @@ const resolvers = {
             }
         },
         createReaction: (root, {reactionInput}, context) => {
-            // if (context.isAuthenticated()) {
-            //     let u = context.getUser();
-            let newReaction = new Reaction(reactionInput);
-            // newReaction.user = u;
-            return newReaction.save()
-                .then(r => r)
-                .catch(e => e)
-            // } else {
-            //     return new AuthenticationError("You are not logged in.");
-            // }
+            if (context.isAuthenticated()) {
+                let u = context.getUser();
+                let newReaction = new Reaction(reactionInput);
+                newReaction.user = u;
+                let searchQuery = {};
+                searchQuery.kind = reactionInput.kind;
+                if (reactionInput.post) {
+                    searchQuery.post = reactionInput.post;
+                } else {
+                    searchQuery.reaction = reactionInput.reaction;
+                }
+                searchQuery.user = u._id;
+                return Reaction.findOne(searchQuery)
+                    .then(r => {
+                        if (r) {
+                            return new AuthenticationError("You already reacted to this thread");
+                        } else {
+                            return newReaction.save()
+                                .then(r => r)
+                                .catch(e => e)
+                        }
+                    })
+                    .catch(e => e)
+
+            } else {
+                return new AuthenticationError("You are not logged in.");
+            }
         },
         deleteReaction: (root, {reactionId}, context) => {
             if (context.isAuthenticated()) {
@@ -199,7 +195,7 @@ const resolvers = {
                 return Reaction.findOne({_id: reactionId, user: u._id})
                     .then(r => {
                         if (r) {
-                            return Reaction.deleteById(reactionId)
+                            return Reaction.deleteOne({_id: reactionId})
                                 .then(rd => rd)
                                 .catch(e => e)
                         } else {
